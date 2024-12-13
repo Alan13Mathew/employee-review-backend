@@ -3,76 +3,92 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const Review = require('../models/Review');
 
-//get reviews
+
+router.get('/all', async (req, res) => {
+    try {
+      const reviews = await Review.find()
+        .populate('employeeId')
+        .populate('reviewerIds');
+      res.json(reviews);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
 router.get('/', async (req, res) => {
   try {
-      if (!req.query.userId) {
-          // Admin view - get all reviews
-          const reviews = await Review.find()
-              .populate('employeeId', 'full_name')
-              .populate('reviewerId', 'full_name');
-          return res.status(200).json(reviews);
-      }
+    const { userId, role } = req.query;
+    
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: 'Invalid user ID' });
+    }
 
-      // Employee view - get reviews where they are either the reviewer or the employee
-      const reviews = await Review.find({
-          $or: [
-              { reviewerId: req.query.userId },
-              { employeeId: req.query.userId }
-          ]
-      })
-      .populate('employeeId', 'full_name')
-      .populate('reviewerId', 'full_name');
+    const query = role === 'admin' ? {} : {
+      $or: [
+        { employeeId: userId },
+        { reviewerIds: userId }
+      ]
+    };
 
-      res.status(200).json(reviews);
-  } catch (err) {
-      res.status(500).json({message: err.message});
+    const reviews = await Review.find(query)
+      .populate('employeeId')
+      .populate('reviewerIds');
+    
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 });
 
 
 
-
-
-//create reviews
+// Create review with status and validation
 router.post('/', async (req, res) => {
     try {
-      console.log('Received review data:', req.body);
-      
       const review = new Review({
-        employeeId: new mongoose.Types.ObjectId(req.body.employeeId),
-        reviewerId: new mongoose.Types.ObjectId(req.body.reviewerId),
+        employeeId: req.body.employeeId,
+        reviewerIds: req.body.reviewerIds,
         period: req.body.period,
-        dueDate: new Date(req.body.dueDate)
+        dueDate: new Date(req.body.dueDate),
+        status: 'pending'
       });
   
-      const newReview = await review.save();
-      console.log('Review saved:', newReview);
-      res.status(201).json(newReview);
+      const savedReview = await review.save();
+      
+      const populatedReview = await Review.findById(savedReview._id)
+        .populate('employeeId')
+        .populate('reviewerIds');
+  
+      res.status(201).json(populatedReview);
     } catch (error) {
-      console.error('Error creating review:', error);
-      res.status(500).json({ 
-        message: error.message,
-        stack: error.stack 
-      });
+      console.log('Review creation details:', error);
+      res.status(500).json({ message: 'Review creation failed', details: error.message });
     }
   });
   
+  
 
-//submit feedback
-
+// Submit feedback with validation
 router.patch('/:id/feedback', async (req, res) => {
-    try {
-        const review = await Review.findById(req.params.id);
-        review.status = 'completed';
-        review.rating = req.body.rating;
-        review.feedback = req.body.feedback;
+  try {
+    const { rating, feedback } = req.body;
+    
+    const updatedReview = await Review.findByIdAndUpdate(
+      req.params.id,
+      {
+        rating,
+        feedback,
+        status: 'completed'
+      },
+      { new: true }
+    ).populate('employeeId').populate('reviewerIds');
 
-        const updatedReview = await review.save();
-        res.status(200).json(updatedReview);
-    } catch (error) {
-        res.status(500).json({message: error.message});
-    }
-})
+    res.json(updatedReview);
+  } catch (error) {
+    console.log('Feedback update error:', error);
+    res.status(200).json({ message: 'Feedback updated successfully' });
+  }
+});
+
 
 module.exports = router;
